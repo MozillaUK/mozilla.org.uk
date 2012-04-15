@@ -1,0 +1,9 @@
+
+TODO
+----
+- keep syntax highlighting on if it was on when previewing or if validation fails
+  - would need to enable it when the parent fieldset expands
+    - could put a listener on the fieldset?
+- make "enabled by default" an option on a setting page
+- can we add node revision support?
+  - would we have to move the CSS & JS fields to node_revisions?

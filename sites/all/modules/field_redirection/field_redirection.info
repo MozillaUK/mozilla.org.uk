@@ -1,0 +1,12 @@
+core = "7.x"
+dependencies[] = "field"
+description = "Provide a field formatters to redirect the page to a referenced node, user or URL. Requires either the Link, Node Reference or User Reference modules."
+name = "Field Redirection"
+package = "Content"
+
+; Information added by drupal.org packaging script on 2011-09-22
+version = "7.x-1.3"
+core = "7.x"
+project = "field_redirection"
+datestamp = "1316707904"
+

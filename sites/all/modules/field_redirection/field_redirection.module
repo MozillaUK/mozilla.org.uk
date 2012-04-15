@@ -1,0 +1,146 @@
+<?php
+/**
+ * @file
+ * Provides a field formatter to redirect to another path.
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function field_redirection_permission() {
+  return array(
+    'bypass redirection' => array(
+      'title' => t('Bypass Redirection'),
+      'description' => t('Allow the user to see the page this field belongs to and <em>not</em> redirect to the given path; the user will instead be provided a link to the path.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_formatter_info().
+ */
+function field_redirection_field_formatter_info() {
+  return array(
+    'redirect_300' => array(
+      'label' => t('Redirect - HTTP status code 300 - rarely used'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_301' => array(
+      'label' => t('Redirect - HTTP status code 301 - permanently moved'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_302' => array(
+      'label' => t('Redirect - HTTP status code 302 - rarely used'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_303' => array(
+      'label' => t('Redirect - HTTP status code 303 - rarely used'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_304' => array(
+      'label' => t('Redirect - HTTP status code 304 - rarely used'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_305' => array(
+      'label' => t('Redirect - HTTP status code 305 - rarely used'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+    'redirect_307' => array(
+      'label' => t('Redirect - HTTP status code 307 - temporarily moved'),
+      'field types' => array('link_field', 'node_reference', 'user_reference'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ *
+ * If we have a node reference and we can redirect to it lets do it!
+ */
+function field_redirection_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+  $settings = $display['settings'];
+
+  // Only proceed if there's data.
+  if (!empty($items[0])) {
+    // All of these are handled the same way, just with a different HTTP
+    // response code.  See http://en.wikipedia.org/wiki/URL_redirection for
+    // full details.
+    $responses = array(
+      'redirect_300' => 300,
+      'redirect_301' => 301,
+      'redirect_302' => 302,
+      'redirect_303' => 303,
+      'redirect_304' => 304,
+      'redirect_305' => 305,
+      'redirect_307' => 307,
+    );
+    // The default response code is 301.
+    $response_code = 301;
+    if (isset($responses[$display['type']])) {
+      $response_code = $responses[$display['type']];
+    }
+    $element = field_redirection_goto($instance, $items[0], $response_code);
+  }
+
+  return $element;
+}
+
+/**
+ * Redirect to the destination value from a given field.
+ *
+ * @param $instance
+ *   The field settings.
+ * @param $item
+ *   The field data to work on.
+ * @param $response_code
+ *   The HTTP Response Code to use, defaults to "301".
+ */
+function field_redirection_goto($instance, $item, $response_code = 301) {
+  $element = array();
+
+  // Work out the destination path to redirect to.
+  $path = '';
+  if (!empty($instance['widget']['type'])) {
+    switch ($instance['widget']['type']) {
+      // Link field.
+      case 'link_field':
+        if (!empty($item['url'])) {
+          $path = $item['url'];
+        }
+        break;
+
+      // Node reference field.
+      case 'node_reference':
+      case 'node_reference_autocomplete':
+        if (!empty($item['nid'])) {
+          // Wrap the internal system path with its alias.
+          $path = drupal_get_path_alias('node/' . $item['nid']);
+        }
+        break;
+
+      // User reference field.
+      case 'user_reference':
+      case 'user_reference_autocomplete':
+        if (!empty($item['uid'])) {
+          // Wrap the internal system path with its alias.
+          $path = drupal_get_path_alias('user/' . $item['uid']);
+        }
+        break;
+    }
+  }
+
+  // Only proceed if a path was identified.
+  if (!empty($path)) {
+    // If the user has permission to bypass the page redirection, return a
+    // message explaining where they would have been redirected to.
+    if (user_access('bypass redirection')) {
+      drupal_set_message(t('This page is set to redirect to <a href="!path">another URL</a>, but you have permission to see the page and not be automatically redirected.', array('!path' => base_path() . $path)), 'warning');
+    }
+    else {
+      drupal_goto($path, array(), $response_code);
+    }
+  }
+
+  return $element;
+}

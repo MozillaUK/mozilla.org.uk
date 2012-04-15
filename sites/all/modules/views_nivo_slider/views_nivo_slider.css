@@ -1,0 +1,11 @@
+.views-nivo-slider img {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+}
+
+.views-nivo-slider a {
+  border: 0;
+  display: block;
+}
+

@@ -1,0 +1,593 @@
+<?php
+
+/**
+ * @file support_overview.module
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function support_overview_permission() {
+  return array(
+    'view client overview' => array(
+      'title' => t('View client overview'),
+    ),
+    'view user overview' => array(
+      'title' => t('View user overview'),
+    ),
+    'administer support overview' => array(
+      'title' => t('Administer support overview'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function support_overview_menu() {
+  $items = array();
+
+  $items['support/overview/user'] = array(
+    'title' => 'User ticket overview',
+    'page callback' => 'support_overview_page_users',
+    'access arguments' => array('view user overview'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['support/overview/user/all'] = array(
+    'title' => 'User ticket overview',
+    'page callback' => 'support_overview_page_users',
+    'access arguments' => array('view user overview'),
+    'page arguments' => array(TRUE),
+    'type' => MENU_CALLBACK,
+  );
+  $items['support/overview/user/%user'] = array(
+    'page callback' => 'support_overview_page_user',
+    'page arguments' => array(3),
+    'access callback' => 'support_access_user_tickets',
+    'access arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['support/overview/user/%user/all'] = array(
+    'page callback' => 'support_overview_page_user',
+    'page arguments' => array(3, TRUE),
+    'access callback' => 'support_access_user_tickets',
+    'access arguments' => array(3),
+    'type' => MENU_CALLBACK,
+  );
+  $items['support/overview/client'] = array(
+    'title' => 'Client ticket overview',
+    'description' => 'Support client overview',
+    'page callback' => 'support_overview_summary',
+    'access arguments' => array('view client overview'),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['admin/support/overview'] = array(
+    'title' => 'Overview settings',
+    'description' => 'Support client overview',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_overview_summary_settings'),
+    'access arguments' => array('administer support overview'),
+//    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => 2,
+  );
+
+  return $items;
+}
+
+/**
+ * Display support ticket overview, highlighting ticket queues with tickets
+ * older than a configurable age limit.
+ */
+function support_overview_summary() {
+  drupal_add_css(drupal_get_path('module', 'support_overview') . '/support-overview.css');
+  // Determine which clients to display
+  $enabled_clients = variable_get('support_overview_clients', array());
+  if (!is_array($enabled_clients) || empty($enabled_clients)) {
+    $enabled_clients = _support_available_clients();
+  }
+  $all_clients = _support_available_clients();
+  $clients = array();
+  foreach ($enabled_clients as $clid => $name) {
+    // Don't display clients user doesn't have permission to see
+    if (isset($all_clients[$clid])) {
+      $clients[$clid] = support_client_load($clid);
+    }
+  }
+
+  $enabled_states = variable_get('support_overview_states', array());
+  if (!is_array($enabled_states) || empty($enabled_states)) {
+    $states = _support_states();
+  }
+  else {
+    $states = array();
+    foreach ($enabled_states as $sid) {
+      if ($sid) {
+        $states[$sid] = _support_state($sid);
+      }
+      else {
+        $states[$sid] = t('all');
+      }
+    }
+  }
+
+  $output = '<div class="support-overview">';
+  $header = array('tickets', 'all');
+
+  $enabled_priorities = variable_get('support_overview_priorities', array());
+  foreach ($enabled_priorities as $pid) {
+    $header[] = _support_priorities($pid);
+  }
+  foreach ($clients as $client) {
+    $rows = array();
+    $current_row = 0;
+    // Break down overview by ticket state
+    foreach ($states as $sid => $state) {
+      $total_args = $latest_args = $oldest_args = array();
+      $rows[$current_row][] = l($state, support_queue_url($client) . "/$state");
+
+      // TODO Fully convert these queries to D7.
+      $total_sql = 'SELECT COUNT(t.nid) FROM {support_ticket} t WHERE t.client = :client';
+      $total_args[':client'] = $client->clid;
+
+      $latest_sql = $oldest_sql = 'SELECT GREATEST(n.changed, l.last_comment_timestamp) AS last_update, n.nid FROM {node} n LEFT JOIN {support_ticket} t ON n.nid = t.nid INNER JOIN {node_comment_statistics} l ON n.nid = l.nid WHERE t.client = :client';
+      $latest_args[':client'] = $client->clid;
+      $oldest_args[':client'] = $client->clid;
+
+      if ($sid) {
+        $total_sql .= ' AND t.state = :state';
+        $total_args[':state'] = $sid;
+        $latest_sql .= ' AND t.state = :state';
+        $latest_args[':state'] = $sid;
+        $oldest_sql .= ' AND t.state = :state';
+        $oldest_args[':state'] = $sid;
+      }
+      $latest_sql .= ' ORDER BY last_update DESC';
+      $oldest_sql .= ' ORDER BY last_update ASC';
+
+      $total = db_query($total_sql, $total_args)->fetchField();
+      $latest = db_query_range($latest_sql, 0, 1, $latest_args)->fetch();
+      $oldest = db_query_range($oldest_sql, 0, 1, $oldest_args)->fetch();
+
+      if (!empty($latest->nid)) {
+        $latest_alert = _support_overview_alert($latest->last_update);
+        $oldest_alert = _support_overview_alert($oldest->last_update);
+        $alerts = "$latest_alert $oldest_alert";
+
+        $node = node_load($latest->nid);
+        $latest_update = $latest->last_update ? t('most recent: !time, "!title"', array('!time' => format_interval(time() - $latest->last_update), '!title' => l($node->title, "node/$node->nid"))) : '';
+        if ($latest->last_update != $oldest->last_update) {
+          $node = node_load($oldest->nid);
+          $oldest_update = $oldest->last_update ? t('oldest: !time, "!title"', array('!time' => format_interval(time() - $oldest->last_update), '!title' => l($node->title, "node/$node->nid"))) : '';
+        }
+        else {
+          $oldest_update = '';
+        }
+        $rows[$current_row][] = t('!total !latest !oldest', array('!total' => "<span class='support-overview-total $state'>$total</span>", '!latest' => "<div class='support-overview-latest $state$latest_alert'>$latest_update</div>", '!oldest' => "<div class='support-overview-oldest $state$oldest_alert'>$oldest_update</div>"));
+      }
+      else {
+        $rows[$current_row][] = '0';
+      }
+
+      foreach ($enabled_priorities as $pid) {
+        if ($pid && $sid) {
+          $total = db_query('SELECT COUNT(nid) FROM {support_ticket} WHERE client = :client AND state = :state AND priority = :priority', array(':client' => $client->clid, ':state' => $sid, ':priority' => $pid))->fetchField();
+        }
+        else if ($pid) {
+          $total = db_query('SELECT COUNT(nid) FROM {support_ticket} WHERE client = :client AND priority = :priority', array(':client' => $client->clid, ':priority' => $pid))->fetchField();
+        }
+        else {
+          $total = db_query('SELECT COUNT(nid) FROM {support_ticket} WHERE client = :client AND state = :state', array(':client' => $client->clid, ':state' => $sid))->fetchField();
+        }
+        if ($total) {
+          $priority = _support_priorities($pid);
+        }
+        else {
+          $priority = 'not-' . _support_priorities($pid);
+        }
+        $rows[$current_row][] = "<div class='" . check_plain($priority) . "'>$total</div>";
+      }
+      $current_row++;
+    }
+    // Break down overview by who the ticket is assigned to
+    $query = db_select('support_ticket')
+      ->distinct()
+      ->fields('support_ticket', array('assigned'))
+      ->condition('client', $client->clid)
+      ->orderBy('assigned', 'ASC');
+
+    // [0] == 'All'
+    if (!empty($enabled_states) && !isset($enabled_states[0])) {
+      $query->condition('state', $enabled_states);
+    }
+
+    $result = $query->execute();
+    foreach ($result as $assigned) {
+      $account = user_load($assigned->assigned);
+
+      $total_sql = db_select('support_ticket')
+        ->condition('client', $client->clid)
+        ->condition('assigned', $assigned->assigned);
+      $total_sql->addExpression('COUNT(nid)');
+
+      $latest_sql = db_select('node', 'n');
+      $latest_sql->leftJoin('support_ticket', 't', 'n.nid = t.nid');
+      $latest_sql->innerJoin('node_comment_statistics', 'l', 'n.nid = l.nid');
+      $latest_sql->addExpression('GREATEST(n.changed, l.last_comment_timestamp)', 'last_update');
+      $latest_sql->addField('n', 'nid');
+      $latest_sql->condition('t.client', $client->clid);
+      $latest_sql->condition('assigned', $assigned->assigned);
+      $latest_sql->range(0, 1);
+
+      // [0] == 'All'
+      if (!empty($enabled_states) && !isset($enabled_states[0])) {
+        $latest_sql->condition('state', $enabled_states);
+      }
+
+      $oldest_sql = clone($latest_sql);
+      $latest_sql->orderBy('last_update', 'DESC');
+      $oldest_sql->orderBy('last_update', 'ASC');
+
+
+      $total = $total_sql->execute()->fetchField();
+      $latest = $latest_sql->execute()->fetch();
+      $oldest = $oldest_sql->execute()->fetch();
+
+      $latest_alert = _support_overview_alert($latest->last_update);
+      $oldest_alert = _support_overview_alert($oldest->last_update);
+      $alerts = "$latest_alert $oldest_alert";
+
+      $node = node_load($latest->nid);
+      $latest_update = $latest->last_update ? t('most recent: !time, "!title"', array('!time' => format_interval(time() - $latest->last_update), '!title' => l($node->title, "node/$node->nid"))) : '';
+      if ($latest->last_update != $oldest->last_update) {
+        $node = node_load($oldest->nid);
+        $oldest_update = $oldest->last_update ? t('oldest: !time, "!title"', array('!time' => format_interval(time() - $oldest->last_update), '!title' => l($node->title, "node/$node->nid"))) : '';
+      }
+      else {
+        $oldest_update = '';
+      }
+
+      if (empty($account->name)) {
+        $rows[$current_row][] = "<div class='support-overview-name $alerts'>" . t('not assigned') . '</div>';
+      }
+      else {
+        $rows[$current_row][] = "<div class='support-overview-name $alerts'>" . l($account->name, "support/$account->uid/assigned") . '</div>';
+      }
+
+      $rows[$current_row][] = t('!total !latest !oldest', array('!total' => "<span class='support-overview-total $state'>$total</span>", '!latest' => "<div class='support-overview-latest $state$latest_alert'>$latest_update</div>", '!oldest' => "<div class='support-overview-oldest $state$oldest_alert'>$oldest_update</div>"));
+
+      foreach ($enabled_priorities as $pid) {
+        $query = db_select('support_ticket')
+          ->condition('client', $client->clid)
+          ->condition('assigned', $assigned->assigned);
+        $query->addExpression('COUNT(nid)');
+
+        if ($pid) {
+          $query->condition('priority', $pid);
+        }
+
+        // [0] == 'All'
+        if (!empty($enabled_states) && !isset($enabled_states[0])) {
+          $query->condition('state', $enabled_states);
+        }
+
+        $total = $query->execute()->fetchField();
+        if ($total) {
+          $priority = _support_priorities($pid);
+        }
+        else {
+          $priority = 'not-' . _support_priorities($pid);
+        }
+        $rows[$current_row][] = "<div class='" . check_plain($priority) . "'>$total</div>";
+      }
+
+      $current_row++;
+    }
+
+    $output .= "<a href='" . url(support_queue_url($client)) . "'><h3 class='support-overview-client-name $alerts'>" . check_plain($client->name) . '</h3></a>';
+    $output .= theme('table', array('header' => $header, 'rows' => $rows));
+  }
+  $output .= '</div>';
+  return $output;
+}
+
+/**
+ * Configure what to display on the summary page.
+ */
+function support_overview_summary_settings() {
+  drupal_set_title(t('Support overview settings'));
+  $form = array();
+  $clients = _support_available_clients();
+  $form['clients'] = array(
+    '#type' => 'select',
+    '#multiple' => TRUE,
+    '#title' => t('Include selected client(s)'),
+    '#options' => $clients,
+    '#size' => count($clients) > 10 ? 10 : count($clients),
+    '#description' => t('If no clients are selected, all clients will be included on the overview page.  Otherwise, only the selected clients will be included on the overview page.'),
+    '#default_value' => variable_get('support_overview_clients', array()),
+  );
+  $states = _support_states();
+  $states[0] = t('all');
+  $form['states'] = array(
+    '#type' => 'select',
+    '#multiple' => TRUE,
+    '#title' => t('List selected state(s)'),
+    '#options' => $states,
+    '#size' => count($states) > 10 ? 10 : count($states),
+    '#description' => t('If no states are selected, all states will be broken out on the overview page.  Otherwise, only the selected states will be broken out on the overview page.'),
+    '#default_value' => variable_get('support_overview_states', array()),
+  );
+  $priorities = _support_priorities();
+  $form['priorities'] = array(
+    '#type' => 'select',
+    '#multiple' => TRUE,
+    '#title' => t('Break out selected priorities'),
+    '#options' => $priorities,
+    '#size' => count($priorities) > 10 ? 10 : count($priorities),
+    '#description' => t('Select one or more priorities to display an extra column showing tickets of this priority.  If no priorities are selected, tickets won\'t be displayed by priority.'),
+    '#default_value' => variable_get('support_overview_priorities', array()),
+  );
+
+  $form['alerts'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Alerts'),
+    '#collapsible' => TRUE,
+  );
+  $options = array('0' => t('Never')) + drupal_map_assoc(array(86400, 86400 * 2, 86400 * 3, 86400 * 4, 86400 * 5, 86400 * 6, 86400 * 7, 86400 * 14, 86400 * 21, 86400 * 28), 'format_interval');
+  $form['alerts']['alert1'] = array(
+    '#type' => 'select',
+    '#title' => 'Alert level 1',
+    '#options' => $options,
+    '#default_value' => variable_get('support_overview_alert1', 0),
+    '#description' => t('Tickets that haven\'t been updated for more than the specified time will be marked with a "alert1" CSS class.'),
+  );
+  $form['alerts']['alert2'] = array(
+    '#type' => 'select',
+    '#title' => 'Alert level 2',
+    '#options' => $options,
+    '#default_value' => variable_get('support_overview_alert2', 0),
+    '#description' => t('Tickets that haven\'t been updated for more than the specified time will be marked with a "alert2" CSS class.'),
+  );
+  $form['alerts']['alert3'] = array(
+    '#type' => 'select',
+    '#title' => 'Alert level 3',
+    '#options' => $options,
+    '#default_value' => variable_get('support_overview_alert3', 0),
+    '#description' => t('Tickets that haven\'t been updated for more than the specified time will be marked with a "alert3" CSS class.'),
+  );
+
+  $form['user'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('User overview settings'),
+    '#collapsible' => TRUE,
+  );
+  $form['user']['roles'] = array(
+    '#type' => 'select',
+    '#multiple' => TRUE,
+    '#title' => t('Display user from selected role(s)'),
+    '#options' => user_roles(),
+    '#default_value' => variable_get('support_overview_roles', 0),
+    '#description' => t('Optionally select one or more roles to limit users displayed on user overview pages.'),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+  );
+  return $form;
+}
+
+/**
+ * Validate overview settings.
+ */
+function support_overview_summary_settings_validate($form, &$form_state) {
+  if (!empty($form_state['values']['alert2']) && $form_state['values']['alert1'] > $form_state['values']['alert2']) {
+    form_set_error('alert1', t('Alert 1 must be a smaller value than alert 2.'));
+  }
+  if (!empty($form_state['values']['alert3']) && $form_state['values']['alert1'] > $form_state['values']['alert3']) {
+    form_set_error('alert1', t('Alert 1 must be a smaller value than alert 3.'));
+  }
+  if (!empty($form_state['values']['alert3']) && $form_state['values']['alert2'] > $form_state['values']['alert3']) {
+    form_set_error('alert2', t('Alert 2 must be a smaller value than alert 3.'));
+  }
+}
+
+/**
+ * Save overview settings.
+ */
+function support_overview_summary_settings_submit($form, &$form_state) {
+  variable_set('support_overview_clients', $form_state['values']['clients']);
+  variable_set('support_overview_states', $form_state['values']['states']);
+  variable_set('support_overview_priorities', $form_state['values']['priorities']);
+  variable_set('support_overview_alert1', $form_state['values']['alert1']);
+  variable_set('support_overview_alert2', $form_state['values']['alert2']);
+  variable_set('support_overview_alert3', $form_state['values']['alert3']);
+  variable_set('support_overview_roles', $form_state['values']['roles']);
+  drupal_set_message('Overview settings updated.');
+}
+
+/**
+ * Add CSS classes to highlight clients and users with old tickts.
+ */
+function _support_overview_alert($time) {
+  if (!empty($time)) {
+    $alert3 = variable_get('support_overview_alert3', 0);
+    $alert2 = variable_get('support_overview_alert2', 0);
+    $alert1 = variable_get('support_overview_alert1', 0);
+    // Level 3 alert
+    if ($alert3 && time() - $time > $alert3) {
+      return ' alert3';
+    }
+    // Level 2 alert
+    if ($alert2 && time() - $time > $alert2) {
+      return ' alert2';
+    }
+    // Level 1 alert
+    if ($alert1 && time() - $time > $alert1) {
+      return ' alert1';
+    }
+  }
+}
+
+/**
+ * Implementation of hook_user().
+ */
+function support_overview_user($type, &$edit, &$account) {
+  global $user;
+  if (variable_get('support_display_user_links', TRUE)) {
+    if ($type == 'view' &&
+       ((user_access('create tickets', $account) && $user->uid == $account->uid)
+         || user_access('administer support'))) {
+      $items = array(l(t('Overview'), "support/overview/user/$account->uid", array('attributes' => array('title' => t("View overview of @username's tickets.", array('@username' => check_plain($account->name)))))));
+      $account->content['summary']['support']['#value'] .= theme('item_list', array('items' => $items));
+    }
+  }
+}
+
+function support_overview_page_user($account, $all = FALSE, $page = TRUE) {
+  global $user;
+  $output = '';
+
+  if ($page) {
+    drupal_add_css(drupal_get_path('module', 'support_overview') . '/support-overview.css');
+    $output = '<div class="support-overview">';
+
+    if ($user->uid == $account->uid) {
+      drupal_set_title(t('My ticket overview'));
+    }
+    else {
+      drupal_set_title(t("@username's ticket overview", array('@username' => $account->name)));
+    }
+    $breadcrumb = array();
+    $breadcrumb[] = l(t('Home'), NULL);
+    $breadcrumb[] = l($account->name, "user/$account->uid");
+    drupal_set_breadcrumb($breadcrumb);
+  }
+
+  $enabled_clients = variable_get('support_overview_clients', array());
+  $all_clients = _support_available_clients();
+  if ($all || !is_array($enabled_clients) || empty($enabled_clients)) {
+    $enabled_clients = array();
+    foreach ($all_clients as $clid => $client) {
+      $enabled_clients[] = $clid;
+    }
+    $all = TRUE;
+  }
+
+  $header = array(t('Client'), t('Tickets'));
+  $rows = array();
+  $current_row = 0;
+  foreach ($enabled_clients as $clid) {
+    if (isset($all_clients[$clid])) {
+      $total_sql = db_select('support_ticket')
+        ->condition('client', $clid)
+        ->condition('assigned', $account->uid);
+      $total_sql->addExpression('COUNT(nid)');
+
+      $enabled_states = variable_get('support_overview_states', array());
+      // [0] == 'All'
+      if (!empty($enabled_states) && !isset($enabled_states[0])) {
+        $total_sql->condition('state', $enabled_states);
+      }
+
+      $count = $total_sql->execute()->fetchField();
+      if ($count) {
+        $client = support_client_load($clid);
+        $rows[$current_row][] = '<a href="' . url(support_queue_url($client)) . '" class="support-overview-title">' . check_plain($client->name) . '</a>';
+
+        $latest_sql = db_select('node', 'n');
+        $latest_sql->leftJoin('support_ticket', 't', 'n.nid = t.nid');
+        $latest_sql->innerJoin('node_comment_statistics', 'l', 'n.nid = l.nid');
+        $latest_sql->addExpression('GREATEST(n.changed, l.last_comment_timestamp)', 'last_update');
+        $latest_sql->addField('n', 'nid');
+        $latest_sql->condition('t.client', $clid);
+        $latest_sql->condition('assigned', $account->uid);
+        $latest_sql->range(0, 1);
+
+        // [0] == 'All'
+        if (!empty($enabled_states) && !isset($enabled_states[0])) {
+          $latest_sql->condition('state', $enabled_states);
+        }
+
+        $oldest_sql = clone($latest_sql);
+        $latest_sql->orderBy('last_update', 'DESC');
+        $oldest_sql->orderBy('last_update', 'ASC');
+
+        $latest = $latest_sql->execute()->fetch();
+        $latest_alert = _support_overview_alert($latest->last_update);
+
+        $node = node_load($latest->nid);
+        $latest_update = t('most recent: !time ago, "!title"', array('!time' => format_interval(time() - $latest->last_update), '!title' => l($node->title, "node/$latest->nid")));
+
+        $oldest_alert = '';
+        if ($count > 1) {
+          $oldest = $oldest_sql->execute()->fetch();
+          $oldest_alert = _support_overview_alert($oldest->last_update);
+
+          $node = node_load($oldest->nid);
+          $oldest_update = t('oldest: !time ago, "!title"', array('!time' => format_interval(time() - $oldest->last_update), '!title' => l($node->title, "node/$oldest->nid")));
+        }
+        else {
+          $oldest_update = '';
+        }
+
+        $rows[$current_row][] = t('!total !latest !oldest', array('!total' => "<span class='support-overview-total'>$count</span>", '!latest' => "<div class='support-overview-latest $latest_alert'>$latest_update</div>", '!oldest' => "<div class='support-overview-oldest $oldest_alert'>$oldest_update</div>"));
+      }
+      $current_row++;
+    }
+  }
+  $output .= theme('table', array('header' => $header, 'rows' => $rows));
+  if ($page) {
+    $output .= '<div class="support-overview-link">' . l($all ? t('selected clients') : t('all clients'), $all ? "support/overview/user/$account->uid" : "support/overview/user/$account->uid/all") . '</div>';
+    $output .= '</div>';
+  }
+  return $output;
+}
+
+function support_overview_page_users($all = FALSE) {
+  drupal_add_css(drupal_get_path('module', 'support_overview') . '/support-overview.css');
+  $output = '<div class="support-overview">';
+  $enabled_clients = variable_get('support_overview_clients', array());
+  $all_clients = _support_available_clients();
+  if ($all || !is_array($enabled_clients) || empty($enabled_clients)) {
+    $enabled_clients = array();
+    foreach ($all_clients as $clid => $client) {
+      $enabled_clients[] = $clid;
+    }
+    $all = TRUE;
+  }
+
+  $enabled_roles = variable_get('support_overview_roles', array());
+
+  $sql = db_select('support_ticket', 't')
+    ->fields('t', array('assigned'))
+    ->distinct()
+    ->condition('t.client', $enabled_clients, 'IN');
+  $sql->join('users', 'u', 't.assigned = u.uid');
+  $sql->join('users_roles', 'r', 'u.uid = r.uid');
+  $sql->orderBy('u.name', 'ASC');
+
+  if (!empty($enabled_roles)) {
+    $sql->condition('r.rid', $enabled_roles, 'IN');
+  }
+  else {
+    $sql->condition('t.assigned', 0, '!=');
+  }
+
+  $enabled_states = variable_get('support_overview_states', array());
+  // [0] == 'All'
+  if (!empty($enabled_states) && !isset($enabled_states[0])) {
+    $sql->condition('state', $enabled_states);
+  }
+  $result = $sql->execute();
+  foreach ($result as $row) {
+    $uid = $row->assigned;
+    $account = user_load($uid);
+    $output .= "<a href='" . url("support/overview/user/$uid") . "'><h3>" . check_plain($account->name) . '</h3></a>';
+    $output .= support_overview_page_user($account, $all, FALSE);
+  }
+  $output .= '<div class="support-overview-link">' . l($all ? t('selected clients') : t('all clients'), $all ? "support/overview/user" : "support/overview/user/all") . '</div>';
+  $output .= '</div>';
+  return $output;
+}

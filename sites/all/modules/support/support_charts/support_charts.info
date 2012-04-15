@@ -1,0 +1,13 @@
+name = Support charting
+description = Charting for the helpdesk and support ticketing system.
+package = Support
+dependencies[] = support
+dependencies[] = chart
+core = 7.x
+
+; Information added by drupal.org packaging script on 2011-11-30
+version = "7.x-1.0-beta3"
+core = "7.x"
+project = "support"
+datestamp = "1322680843"
+

@@ -1,0 +1,19 @@
+Field_Redirection 7.x-1.3, 2011-09-22
+-------------------------------------
+#1268590 by marcusx, DamienMcKenna: Support autocomplete fields, fixed path
+  checks, admin link now includes base_path().
+
+
+Field_Redirection 7.x-1.2, 2011-08-20
+-------------------------------------
+Syntax bug in the last commit.
+
+
+Field_Redirection 7.x-1.1, 2011-08-20
+-------------------------------------
+#1255164 by DamienMcKenna: Complete #facepalm for the main switch statement.
+
+
+Field_Redirection 7.x-1.0, 2011-07-03
+-------------------------------------
+Initial release.

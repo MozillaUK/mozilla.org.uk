@@ -1,0 +1,14 @@
+#santahat {
+    -moz-transform: rotate(-23deg);
+    -webkit-transform: rotate(-23deg);
+    -o-transform: rotate(-23deg);
+    -ms-transform: rotate(-23deg);
+    display: block;
+    height: auto;
+    left: -50px;
+    margin-bottom: -75px;
+    position: relative;
+    top: -340px;
+    width: 100px;
+    z-index: 100;
+}

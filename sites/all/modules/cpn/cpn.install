@@ -1,0 +1,77 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function cpn_schema() {
+  $schema['cpn'] = array(
+    'fields' => array(
+      'nid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'css' => array('type' => 'text', 'not null' => FALSE),
+      'js' => array('type' => 'text', 'not null' => FALSE),
+    ),
+    'primary key' => array('nid'),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_schema_alter().
+ */
+function cpn_schema_alter(&$schema) {
+  $schema['block']['fields']['css'] = array('type' => 'text', 'not null' => FALSE);
+  $schema['block']['fields']['js'] = array('type' => 'text', 'not null' => FALSE);
+}
+
+/**
+ * Implements hook_install().
+ */
+function cpn_install() {
+  // Alter block table, as defined in cpn_schema_alter().
+  $ret = array();
+  $schema = array();
+  cpn_schema_alter($schema);
+  foreach ($schema['block']['fields'] as $name => $spec) {
+    db_add_field('block', $name, $spec);
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function cpn_uninstall() {
+  // Drop fields from block table, as defined in cpn_schema_alter().
+  $ret = array();
+  $schema = array();
+  cpn_schema_alter($schema);
+  foreach ($schema['block']['fields'] as $name => $spec) {
+    db_drop_field('block', $name);
+  }
+
+  // Delete CSS & JS files.
+  file_unmanaged_delete_recursive(variable_get('cpn_path', 'public://cpn'));
+
+  // Delete variables.
+  variable_del('cpn_syntax_highlighting');
+  variable_del('cpn_path');
+  foreach (array_keys(node_type_get_types()) as $type) {
+    variable_del('cpn_css_' . $type);
+    variable_del('cpn_js_' . $type);
+    variable_del('cpn_css_enabled_' . $type);
+    variable_del('cpn_js_enabled_' . $type);
+  }
+}
+
+/**
+ * Update variables to new format.
+ */
+function cpn_update_7000() {
+  foreach (array_keys(node_type_get_types()) as $node_type) {
+    foreach (array('css', 'js') as $type) {
+      if (variable_get('cpn_' . $type . '_' . $node_type, FALSE)) {
+        variable_set('cpn_' . $type . '_enabled_' . $node_type, TRUE);
+        variable_del('cpn_' . $type . '_' . $node_type);
+      }
+    }
+  }
+}

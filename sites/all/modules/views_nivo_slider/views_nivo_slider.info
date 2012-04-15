@@ -1,0 +1,17 @@
+name = Views Nivo Slider
+description = Display a view with Nivo Slider
+core = 7.x
+package = Views
+
+dependencies[]  = views
+
+files[] = views_nivo_slider_plugin_row_nivo_sliderfields.inc
+files[] = views_nivo_slider_style_plugin.inc
+
+
+; Information added by drupal.org packaging script on 2011-11-12
+version = "7.x-2.x-dev"
+core = "7.x"
+project = "views_nivo_slider"
+datestamp = "1321102057"
+

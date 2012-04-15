@@ -1,0 +1,25 @@
+diff --git a/plugins/views_plugin_style_table.inc b/plugins/views_plugin_style_table.inc
+index 36255a1..bd090e5 100644
+--- a/plugins/views_plugin_style_table.inc
++++ b/plugins/views_plugin_style_table.inc
+@@ -126,7 +126,6 @@ class views_plugin_style_table extends views_plugin_style {
+     if ($fields === NULL) {
+       $fields = $this->display->handler->get_option('fields');
+     }
+-
+     // Preconfigure the sanitized array so that the order is retained.
+     foreach ($fields as $field => $info) {
+       // Set to itself so that if it isn't touched, it gets column
+diff --git a/views.module b/views.module
+index e47b389..8085953 100644
+--- a/views.module
++++ b/views.module
+@@ -1095,6 +1095,7 @@ function views_get_handler($table, $field, $key, $override = NULL) {
+ 
+   $data = views_fetch_data($table, FALSE);
+   $handler = NULL;
++  views_include('handlers');
+ 
+   // Support old views_data entries conversion.
+ 
+

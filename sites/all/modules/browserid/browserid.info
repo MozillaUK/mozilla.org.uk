@@ -1,0 +1,16 @@
+name = BrowserID
+description = "Allows users to log in using Mozilla BrowserID."
+core = 7.x
+configure = admin/people/browserid
+
+files[] = browserid.module
+files[] = browserid.install
+
+scripts[] = browserid.js
+
+; Information added by drupal.org packaging script on 2011-12-23
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "browserid"
+datestamp = "1324598930"
+

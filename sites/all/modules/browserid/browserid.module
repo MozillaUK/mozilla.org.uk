@@ -1,0 +1,224 @@
+<?php
+
+/**
+ * @file
+ *   Adds Mozilla BrowserID support to Drupal.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function browserid_menu() {
+  $items = array();
+  $items['admin/people/browserid'] = array(
+    'title' => 'BrowserID',
+    'page callback' => 'browserid_form_render',
+    'page arguments' => array('browserid_admin'),
+    'access arguments' => array('administer site configuration'),
+    'description' => 'Allows administrators to configure settings for the BrowserID module.',
+  );
+  $items['browserid/verify'] = array(
+    'title' => 'BrowserID',
+    'page callback' => 'browserid_verify',
+    'access arguments' => array('log in using browserid'),
+    'description' => 'Verifies BrowserID assertions.',
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * A helper function to render forms.
+ */
+function browserid_form_render() {
+  $args = func_get_args();
+  $form = call_user_func_array('drupal_get_form', $args);
+  return drupal_render($form);
+}
+
+/**
+ * Implements hook_init().
+ */
+function browserid_init() {
+  // Provide e-mail address for display in BrowserID browser chrome.
+  if (user_is_logged_in()) {
+    drupal_add_js(array('browserid' => array(
+      'email' => $GLOBALS['user']->mail
+    )), 'setting');
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function browserid_permission() {
+  return array(
+    'log in using browserid' => array(
+      'title' => t('Log in using BrowserID'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function browserid_block_info() {
+  return array(
+    'login' => array(
+      'info' => t('Log in with BrowserID'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function browserid_block_view($delta = '') {
+  if ($delta == 'login') {
+    if (!$GLOBALS['user']->uid && !(arg(0) == 'user' && !is_numeric(arg(1))) && user_access('log in using browserid')) {
+      return array(
+        'subject' => t('Log in'),
+        'content' => browserid_login_button(),
+      );
+    }
+  }
+}
+
+/**
+ * Display the BrowserID login button.
+ *
+ * @param $type
+ *   The type of sign-in button to display. If not specified, the site's
+ *   setting is used.
+ * @param $all
+ *   If TRUE, returns an array of all button types. Otherwise, returns the
+ *   specified button type.
+ * @return
+ *   HTML for the sign-in button.
+ */
+function browserid_login_button($type = NULL, $all = FALSE) {
+  $path = drupal_get_path('module', 'browserid');
+  drupal_add_js('https://browserid.org/include.js', 'external');
+  if (empty($type)) {
+    $type = variable_get('browserid_button', 'blue');
+  }
+  $vars = array('width' => 79, 'height' => 22, 'alt' => t('Sign in with BrowserID'), 'attributes' => array('class' => array('browserid-button'), 'style' => 'cursor: pointer; display: none;'));
+  $options = array(
+    //'text' => l(t('Sign in with BrowserID'), $_REQUEST['q']),
+    //'button' => t('Standard button'),
+    'red' => theme('image', $vars + array('path' => $path .'/images/sign_in_red.png')),
+    'blue' => theme('image', $vars + array('path' => $path .'/images/sign_in_blue.png')),
+    'orange' => theme('image', $vars + array('path' => $path .'/images/sign_in_orange.png')),
+    'green' => theme('image', $vars + array('path' => $path .'/images/sign_in_green.png')),
+    'grey' => theme('image', $vars + array('path' => $path .'/images/sign_in_grey.png')),
+  );
+  return $all ? $options : $options[$type];
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function browserid_form_user_login_alter(&$form, $form_state) {
+  if (variable_get('browserid_login_form', 1) && user_access('log in using browserid')) {
+    $form['actions']['browserid'] = array(
+      '#markup' => browserid_login_button(),
+    );
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function browserid_form_user_login_block_alter(&$form, $form_state) {
+  if (variable_get('browserid_login_form', 1) && user_access('log in using browserid')) {
+    $form['actions']['browserid'] = array(
+      '#markup' => browserid_login_button(),
+    );
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function browserid_form_user_register_form_alter(&$form, $form_state) {
+  if (isset($_REQUEST['assertion']) && isset($_REQUEST['audience'])) {
+    $response = drupal_http_request(
+      'https://browserid.org/verify?assertion=' . urlencode($_REQUEST['assertion']) . '&audience=' . urlencode($_REQUEST['audience']),
+      array('method' => 'POST')
+    );
+    if ($response->code == 200) {
+      $data = json_decode($response->data);
+      $account = user_load_by_mail($data->email);
+      if (!empty($account) && !empty($account->uid)) {
+        $form_state = array('uid' => $account->uid);
+        user_login_submit(array(), $form_state);
+        drupal_goto('user/'. $account->uid);
+      }
+      else {
+        $error = user_validate_mail($data->email);
+        if (!$error) {
+          drupal_set_message(
+            t('The email address %mail is not registered on @site.', array('%mail' => $data->email, '@site' => variable_get('site_name', 'Drupal'))) .' '.
+            t('You can register below, or try again with a different email address: !browserid', array('!browserid' => browserid_login_button()))
+          );
+          $form['account']['mail'] = array(
+            '#type' => 'value',
+            '#value' => $data->email,
+          );
+          $form['account']['mail_info'] = array(
+            '#type' => 'item',
+            '#title' => t('E-mail address'),
+            '#markup' => '<p>'. check_plain($data->email) .'</p>',
+            '#required' => TRUE,
+            '#weight' => -1,
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The administrative settings form.
+ */
+function browserid_admin($form, $form_state) {
+  $form['browserid_button'] = array(
+    '#type' => 'radios',
+    '#title' => t('Button'),
+    '#default_value' => variable_get('browserid_button', 'blue'),
+    '#options' => browserid_login_button(NULL, TRUE),
+  );
+  $form['browserid_login_form'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Add a "Log in with BrowserID" button to the normal user login form'),
+    '#default_value' => variable_get('browserid_login_form', 1),
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * Verifies assertions.
+ */
+function browserid_verify() {
+  if ($GLOBALS['user']->uid || !isset($_REQUEST['assertion']) || !isset($_REQUEST['audience'])) {
+    return MENU_ACCESS_DENIED;
+  }
+  $response = drupal_http_request(
+    'https://browserid.org/verify?assertion=' . urlencode($_REQUEST['assertion']) . '&audience=' . urlencode($_REQUEST['audience']),
+    array('method' => 'POST')
+  );
+  if ($response->code == 200) {
+    $data = json_decode($response->data);
+    $account = user_load_by_mail($data->email);
+    if (!empty($account) && !empty($account->uid)) {
+      $form_state = array('uid' => $account->uid);
+      user_login_submit(array(), $form_state);
+      drupal_json_output((object) array('reload' => TRUE));
+    }
+    else {
+      drupal_json_output((object) array(
+        'destination' => url('user/register', array('query' => array('assertion' => $_REQUEST['assertion'], 'audience' => $_REQUEST['audience']))),
+      ));
+    }
+  }
+}

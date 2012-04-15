@@ -1,0 +1,1122 @@
+<?php
+
+/**
+* @file 
+* Support Project Management.
+* @author Jeremy Andrews <jeremy@tag1consulting.com>
+* @package Support
+*/
+
+/**
+ * TODO:
+ *  - JavaScript to calculate support plan totals
+ *  - Combined "calendar" view showing all plans on one page
+ */
+ 
+/**
+ * Implements hook_permission().
+ */
+function support_pm_permission() {
+  return array(
+    'create plans' => array(
+      'title' => t('Create support plans'),
+    ),
+    'view all plans' => array(
+      'title' => t('View all support plans'),
+    ),
+    'administer plans' => array(
+      'title' => t('Administer support plans'),
+    ),
+    'administer support projects' => array(
+      'title' => t('Administer support projects'),
+    ),
+  );
+}
+  
+/**
+ * Implements hook_menu().
+ * TODO: Include date in 'view' and 'edit' tabs
+ */
+function support_pm_menu() {
+  $items = array();
+ 
+  $items['user/%user/support_plan'] = array(
+    'title' => 'Support plan',
+    'description' => 'Support planning',
+    'page callback' => 'support_pm_plan_overview_weekly',
+    'page arguments' => array(1),
+    'access arguments' => array('create plans'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['user/%user/support_plan/view'] = array(
+    'title' => 'Show plan',
+    'description' => 'Create support plans',
+    'page callback' => 'support_pm_plan_overview_weekly',
+    'page arguments' => array(1),
+    'access arguments' => array('create plans'),
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['user/%user/support_plan/edit'] = array(
+    'title' => 'Edit plan',
+    'description' => 'Create support plans',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_user_week', 1),
+    'access arguments' => array('create plans'),
+    'weight' => 2,
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['admin/support/plan_report'] = array(
+    'title' => 'Plan reports',
+    'description' => 'Generate support plan reports',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_admin_reports'),
+    'access arguments' => array('administer support'),
+    'file' => 'support_pm.admin.inc',
+  );
+  $items['admin/support/plan_settings'] = array(
+    'title' => 'Plan report settings',
+    'description' => 'Configure support plans.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_admin_settings'),
+    'access arguments' => array('administer support'),
+    'file' => 'support_pm.admin.inc',
+  );
+  $items['admin/support/project'] = array(
+    'title' => 'Projects',
+    'description' => 'Configure support projects.',
+    'page callback' => 'support_pm_admin_project_overview',
+    'access arguments' => array('administer support projects'),
+    'file' => 'support_pm.admin.inc',
+  );
+  $items['admin/support/project/list'] = array(
+    'title' => 'List',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+  );
+  $items['admin/support/project/add'] = array(
+    'title' => 'Add project',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 2,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_admin_project_form'),
+    'access arguments' => array('administer support projects'),
+    'file' => 'support_pm.admin.inc',
+  );
+  $items['admin/support/project/%support_pm_project/edit'] = array(
+    'title' => 'Edit',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_admin_project_form', 3),
+    'access arguments' => array('administer support projects'),
+    'file' => 'support_pm.admin.inc',
+  );
+  $items['admin/support/project/%support_pm_project/delete'] = array(
+    'title' => 'Delete',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('support_pm_admin_project_delete_form', 3),
+    'access arguments' => array('administer support projects'),
+    'file' => 'support_pm.admin.inc',
+  );
+
+  $items['support_pm/image/%'] = array(
+    'page callback' => 'support_pm_display_swatch',
+    'page arguments' => array(2),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  // Add project sub-menu
+  $states = array(-3 => 'all', -2 => 'all open', -1 => 'my open') + _support_states();
+  $result = db_query('SELECT sp.projid, sp.project, sp.path, sp.weight, spc.clid FROM {support_project} sp LEFT JOIN {support_project_client} spc ON sp.projid = spc.projid WHERE disabled = 0 ORDER BY spc.clid, sp.weight ASC, sp.project');
+  foreach ($result as $project) {
+    if ($client = support_client_load($project->clid)) {
+      $clients = array($client);
+    }
+    else {
+      $clients = array();
+      $result2 = db_query('SELECT clid FROM {support_client} WHERE status = 1');
+      foreach ($result2 as $client) {
+        $clients[] = support_client_load($client->clid);
+      }
+    }
+    foreach ($clients as $client) {
+      foreach ($states as $sid => $state) {
+        if ($client->parent == 0) {
+          $items["support/$client->path/$state/$project->path"] = array(
+            'title' => check_plain($project->project),
+            'page callback' => 'drupal_get_form',
+            'page arguments' => array('support_page_form', $client->clid, $state),
+            'access callback' => 'support_access_clients',
+            'access arguments' => array($client),
+            'weight' => $project->weight,
+            'type' => MENU_LOCAL_TASK,
+          );
+        }
+        else {
+          $parent = support_client_load($client->parent);
+          $items["support/$parent->path/$client->path/$state/$project->path"] = array(
+            'title' => check_plain($project->project),
+            'page callback' => 'drupal_get_form',
+            'page arguments' => array('support_page_form', $client->clid, $state),
+            'access callback' => 'support_access_clients',
+            'access arguments' => array($client),
+            'weight' => $project->weight,
+            'type' => MENU_LOCAL_TASK,
+          );
+        }
+      }
+    }
+  }
+
+  return $items;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function support_pm_theme() {
+  return array(
+    'support_pm_user_week' => array(
+      'render element' => 'form',
+    ),
+    'support_pm_pager' => array(
+      'variables' => array('text' => NULL, 'op' => NULL, 'parameters' => array(), 'attributes' => array()),
+    ),
+    'support_pm_user_client_hours_details' => array(
+      'variables' => array('day' => array(), 'scale' => 12),
+    ),
+    'support_pm_user_hours_summary' => array(
+      'variables' => array('totals' => array(), 'load_callback' => 'support_client_load', 'max' => NULL, 'message' => 'Mismatch'),
+    ),
+    'support_pm_plan_diff' => array(
+      'variables' => array('diff' => NULL, 'plan' => NULL),
+    ),
+  );
+}
+
+/**
+ * Implements hook_node_view().
+ */
+function support_pm_node_view($node, $view_mode, $langcode) {
+  if ($node->type != 'support_ticket') {
+    return;
+  }
+  if (user_access('administer support projects')) {
+    if (isset($node->project->project)) {
+      $node->content['support-project'] = array(
+        '#markup' => "<div class='support-priority'>Project: " . check_plain($node->project->project) . '</div>',
+        '#weight' => -1,
+      );
+    }
+  }
+}
+
+/**
+ * Implements hook_node_load().
+ */
+function support_pm_node_load($nodes, $types) {
+  if (!in_array('support_ticket', $types)) {
+    return;
+  }
+  $result = db_query('SELECT * FROM {support_project_ticket} spt LEFT JOIN {support_project} sp ON spt.projid = sp.projid WHERE spt.nid IN (:nids)', array(':nids' => array_keys($nodes)));
+  foreach ($result as $additions) {
+    $nodes[$additions->nid]->project = $additions;
+    // @@@ Deprecate.
+    drupal_alter('support_pm_project_load_nid', $nodes[$additions->nid]->project);
+  }
+}
+
+/**
+ * Implements hook_node_insert().
+ */
+function support_pm_node_insert($node) {
+  return support_pm_node_update($node);
+}
+
+/**
+ * Implements hook_node_update().
+ */
+function support_pm_node_update($node) {
+  if ($node->type != 'support_ticket') {
+    return;
+  }
+  if (!isset($node->project)) {
+    db_delete('support_project_ticket')->condition('nid', $node->nid)->execute();
+  }
+  else {
+    db_merge('support_project_ticket')
+      ->key(array('nid' => $node->nid))
+      ->fields(array(
+        'projid' => $node->project,
+    ))
+      ->execute();
+  }
+}
+
+/**
+ * Implements hook_node_delete().
+ */
+function support_pm_node_delete($node) {
+  if ($node->type != 'support_ticket') {
+    return;
+  }
+  db_delete('support_project_ticket')
+    ->condition('nid', $node->nid)
+    ->execute();
+}
+
+/**
+ * Implements hook_comment_view().
+ */
+function support_pm_comment_view($comment, $view_mode, $langcode) {
+  if ($comment->node_type == 'comment_node_support_ticket' && user_access('administer support projects') && $project = support_pm_project_load_nid($comment->nid)) {
+    // @@@ Why is this being appended to every comment? It seems weird for something that doesn't change state via ticket updates... --Bdragon
+    if (!empty($project->project)) {
+      $comment->content['support']['project'] = array(
+        '#markup' => '<div class="support-project">' . t('Project') . ': ' . check_plain($project->project) . '</div>',
+      );
+      // Make sure the weight is correct.
+      $comment->content['support']['#weight'] = -1;
+    }
+  }
+}
+
+function support_pm_form_alter(&$form, $form_state, $form_id) {
+  if ($form_id == 'support_ticket_node_form') {
+    $node = $form['#node'];
+    $client = FALSE;
+    if (!empty($node->client)) {
+      $client = $node->client;
+    }
+    if (!empty($form_state['values']['client'])) {
+      $client = $form_state['values']['client'];
+    }
+    if (!$client) {
+      $client = _support_current_client();
+    }
+    // @todo: include disabled project if already set to it
+    $options = support_pm_load_projects($client);
+    $form['support']['client_dependencies']['project'] = array(
+      '#type' => 'select',
+      '#title' => t('Project'),
+      '#prefix' => '&nbsp;&nbsp;',
+      '#options' => $options,
+      '#default_value' => (isset($node->project) && isset($node->project->projid)) ? $node->project->projid : support_pm_default_project($options),
+    );
+  }
+}
+
+/**
+ * Alter the ticket listing query to consider projects.
+ */
+function support_pm_query_support_pager_alter($query) {
+  $client = $query->getMetaData('support_client');
+  if ($project = ($client->parent == 0) ? arg(3) : arg(4)) {
+    $project = db_query('SELECT p.projid FROM {support_project} p LEFT JOIN {support_project_client} c ON p.projid = c.projid WHERE (c.clid = :clid OR c.clid = 0) AND p.path = :path', array(':clid' => $client->clid, ':path' => $project))->fetchField();
+    if ($project) {
+      $query->leftJoin('support_project_ticket', 'spt', 'n.nid = spt.nid');
+      $query->condition('spt.projid', $project);
+    }
+  }
+}
+
+/**
+ * Alter the timer report for nodes to consider projects.
+ */
+function support_pm_query_support_timer_node_alter($query) {
+  $project = isset($_GET['project']) ? $_GET['project'] : '';
+  if ($project && $project == preg_replace('/[^0-9a-zA-Z_-]/', '', $project)) {
+    $query->leftJoin('support_project_ticket', 'spt', 'n.nid = spt.nid');
+    $query->leftJoin('support_project', 'sp', 'spt.projid = sp.projid');
+    if (strtolower($project) == 'null') {
+      $query->isNull('sp.path');
+    }
+    else {
+      $query->condition('sp.path', $project);
+    }
+  }
+}
+
+/**
+ * Alter the timer report for comments to consider projects.
+ */
+function support_pm_query_support_timer_comment_alter($query) {
+  $project = isset($_GET['project']) ? $_GET['project'] : '';
+  if ($project && $project == preg_replace('/[^0-9a-zA-Z_-]/', '', $project)) {
+    $query->leftJoin('support_project_ticket', 'spt', 'c.nid = spt.nid');
+    $query->leftJoin('support_project', 'sp', 'spt.projid = sp.projid');
+    if (strtolower($project) == 'null') {
+      $query->isNull('sp.path');
+    }
+    else {
+      $query->condition('sp.path', $project);
+    }
+  }
+}
+
+/**
+ * Allow projects to be selected.
+ */
+function support_pm_support_timer_client_report_alter(&$report) {
+  $report->filters .= drupal_render(drupal_get_form('support_pm_invoice_ui_form'));
+}
+
+/**
+ * Provide form for selecting projects.
+ */
+function support_pm_invoice_ui_form($form, &$form_state) {
+  if (user_access('administer support projects')) {
+    drupal_add_js('jQuery(document).ready(function() { jQuery("form#support-pm-invoice-ui-form select").change(function() { jQuery("form#support-pm-invoice-ui-form").submit(); }); });', 'inline');
+
+    $projects = array(-1 => t('-- no project --'), 0 => t('-- all projects --')) + support_pm_load_projects(_support_current_client());
+    $project = isset($_GET['project']) ? $_GET['project'] : '';
+    if ($project && $project == preg_replace('/[^0-9a-zA-Z_-]/', '', $project)) {
+      if (strtolower($project) == 'null') {
+        $selected = -1;
+      }
+      else {
+        $selected = (int)db_query('SELECT projid FROM {support_project} WHERE path = :path', array(':path' => $project))->fetchField();
+      }
+    }
+    else {
+      $selected = 0;
+    }
+
+    $form['pm'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Project'),
+      '#collapsible' => TRUE,
+      '#collapsed' => $selected ? FALSE : TRUE,
+    );
+    $form['pm']['projects']= array(
+      '#title' => t('Project'),
+      '#type' => 'select',
+      '#options' => $projects,
+      '#default_value' => $selected,
+      '#description' => t('Filter report by selected project.'),
+    );
+    $form['pm']['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Update filter'),
+    );
+  }
+  return $form;
+}
+
+/**
+ * Add url filter when projects are selected.
+ */
+function support_pm_invoice_ui_form_submit($form, &$form_state) {
+  $project = NULL;
+  if (!empty($form_state['values']['projects'])) {
+    $projects = support_pm_load_projects(_support_current_client());
+    if (isset($projects[$form_state['values']['projects']])) {
+      $project = support_pm_project_load($form_state['values']['projects']);
+    }
+    else if ($form_state['values']['projects'] == -1) {
+      $project = new stdClass();
+      $project->path = 'null';
+    }
+  }
+  $path = drupal_get_path_alias(isset($_GET['q']) ? $_GET['q'] : '');
+  $query = array();
+  foreach ($_GET as $key => $value) {
+    if (!in_array($key, array('q', 'project'))) {
+      $query[$key] = $value;
+    }
+  }
+  if (is_object($project)) {
+    $query['project'] = $project->path;
+  }
+  drupal_goto($path, array('query' => $query));
+}
+
+/**
+ *
+ */
+function support_pm_plan_overview_weekly($account) {
+  $output = NULL;
+  $week = isset($_GET['week']) ? _support_pm_first_day((int)$_GET['week']) : _support_pm_first_day(time());
+
+  // Set the page title (keep it consisten with the editing page)
+  drupal_set_title(t('@start - @end', array('@start' => format_date($week, 'medium'), '@end' => format_date($week + 86400 * 6, 'medium'))));
+
+  $header = array('');
+  $row = array('<strong>'. t('Plan') .'</strong>');
+  $row2 = array('<strong>'. t('Actual') .'</strong>');
+  $totals = array('plan' => array());
+  $hours = array();
+  // TODO: Allow for 5 day weeks, etc
+  for ($i = 0; $i < 7; $i++) {
+    $date = $week + 86400 * $i;
+    $header[] = t('!day<br />!date', array('!day' => format_date($date, 'custom', 'l'), '!date' => format_date($date, 'custom', 'M d')));
+    $day = support_pm_day_load($date, $account);
+    if (isset($day[$account->uid]) && is_array($day[$account->uid])) {
+      $row[] = theme('support_pm_user_client_hours_details', array('day' => $day[$account->uid]));
+    }
+    else {
+      $row[] = '';
+    }
+    // Add up totals
+    if (isset($day[$account->uid]) && is_array($day[$account->uid])) {
+      foreach ($day[$account->uid] as $clid => $data) {
+        if (!isset($totals['plan'][$clid])) {
+          $totals['plan'][$clid] = 0;
+        }
+        $totals['plan'][$clid] += $data->hours;
+      }
+    }
+    else if (!is_array($totals['plan'])) {
+      $totals['plan'] = array();
+    }
+
+    // Integrate with the support_timer module, if enabled
+    $hour = array();
+    if (module_exists('support_timer')) {
+      // The support_timer module uses a slightly different date format
+      $convert = strtotime(date('d M Y', $date));
+      $result = db_query('SELECT tt.time, t.client FROM {support_ticket_timer} tt LEFT JOIN {support_ticket} t ON tt.nid = t.nid LEFT JOIN {node} n ON t.nid = n.nid WHERE tt.date = :date AND n.uid = :uid', array(':date' => $convert, ':uid' => $account->uid));
+      foreach ($result as $timer) {
+        if (!isset($hour[$timer->client])) {
+          $hour[$timer->client] = new stdClass();
+        }
+        if (!isset($hours[$timer->client])) {
+          $hours[$timer->client] = new stdClass();
+        }
+        $hour[$timer->client]->hours += support_pm_timer_to_hours($timer->time);
+        $hours[$timer->client]->hours += support_pm_timer_to_hours($timer->time);
+      }
+      $result = db_query('SELECT tt.time, t.client FROM {support_ticket_comment_timer} tt LEFT JOIN {support_ticket_comment} t ON tt.cid = t.cid LEFT JOIN {comment} c ON t.cid = c.cid WHERE tt.date = :date AND c.uid = :uid', array(':date' => $convert, ':uid' => $account->uid));
+      foreach ($result as $timer) {
+        if (!isset($hour[$timer->client])) {
+          $hour[$timer->client] = new stdClass();
+        }
+        if (!isset($hours[$timer->client])) {
+          $hours[$timer->client] = new stdClass();
+        }
+        $hour[$timer->client]->hours += support_pm_timer_to_hours($timer->time);
+        $hours[$timer->client]->hours += support_pm_timer_to_hours($timer->time);
+      }
+      $row2[] = theme('support_pm_user_client_hours_details', array('day' => $hour));
+    }
+  }
+  $rows = array($row);
+  // Only display actual data if support_timer is enabled to collect it
+  if (count($row2) > 1) {
+    $rows[] = $row2;
+    foreach ($hours as $clid => $data) {
+      // Add up totals
+      $totals['actual'][$clid] = $data->hours;
+    }
+  }
+
+  $output = theme('support_pm_pager', array('text' => t('‹ previous'), 'op' => '<'));
+
+  $header2 = array(t('Plan'));
+  $plan_sum = is_array($totals['plan']) ? array_sum($totals['plan']) : 0;
+  $actual_sum = isset($totals['actual']) && is_array($totals['actual']) ? array_sum($totals['actual']) : 0;
+  $max = $plan_sum > $actual_sum ? $plan_sum : $actual_sum;
+  $row = array(theme('support_pm_user_hours_summary', array('totals' => $totals['plan'], 'load_callback' => 'support_client_load', 'max' => $max, 'message' => t('Not scheduled'))));
+
+  if (count($row2) > 1) {
+    $header2[] = t('Actual');
+    $row[] = theme('support_pm_user_hours_summary', array('totals' => isset($totals['actual']) ? $totals['actual'] : NULL, 'load_callback' => 'support_client_load', 'max' => $max, 'message' => t('Not worked')));
+  }
+  $rows2 = array($row);
+  $output .= theme('table', array('header' => $header2, 'rows' => $rows2, 'attributes' => array('id' => 'support_pm_summary')));
+
+  $output .= theme('table', array('header' => $header, 'rows' => $rows, 'attributes' => array('id' => 'support_pm_week')));
+
+  $header = array(t('Client'));
+  if (function_exists('imagecreatetruecolor')) {
+    $header[] = t('Color');
+  }
+  $header[] = t('Planned');
+  $header[] = t('Worked');
+  $header[] = t('Difference');
+  if (isset($totals['plan']) || isset($totals['actual'])) {
+    if (isset($totals['plan']) && isset($totals['actual'])) {
+      $all_clients = $totals['plan'] + $totals['actual'];
+    }
+    else {
+      $all_clients = isset($totals['plan']) ? $totals['plan'] : $totals['actual'];
+    }
+  }
+  else {
+    $all_clients = array();
+  }
+  $rows = $clients = array();
+  foreach ($all_clients as $clid => $data) {
+    $client = support_client_load($clid);
+    $clients[$clid] = $client->name;
+  }
+  asort($clients);
+  $rows = array();
+  foreach ($clients as $clid => $name) {
+    $row = array();
+    $client = support_client_load($clid);
+    $row[] = l($name, "support/$client->path");
+    $comments = db_query('SELECT comment FROM {support_plan} WHERE clid = :client AND uid = :uid AND day = :day', array(':client' => $clid, ':uid' => $account->uid, ':day' => $week))->fetchField();
+    if (!empty($comments)) {
+      $row[0] .= '<br />' . check_plain($comments);
+    }
+    if (function_exists('imagecreatetruecolor')) {
+      $row[] = "<img src='". url('support_pm/image/') . support_pm_chartapi_color($clid) ."' alt='swatch' height='15' width='15' />";
+    }
+    $row[] = isset($totals['plan'][$clid]) ? number_format($totals['plan'][$clid], 2) : "0.00";
+    $row[] = isset($totals['actual'][$clid]) ? number_format($totals['actual'][$clid], 2) : "0.00";
+    if (isset($totals['plan'][$clid])) {
+      if (isset($totals['actual'][$clid])) {
+        $diff = $totals['actual'][$clid] - $totals['plan'][$clid];
+      }
+      else {
+        $diff = -$totals['plan'][$clid];
+      }
+    }
+    else {
+      if (isset($totals['actual'][$clid])) {
+        $diff = $totals['actual'][$clid];
+      }
+      else {
+        $diff = 0.00;
+      }
+    }
+    $plan = isset($totals['plan'][$clid]) ? $totals['plan'][$clid] : 0;
+    $row[] = theme('support_pm_plan_diff', array('diff' => $diff, 'plan' => $plan));
+    $rows[] = $row;
+  }
+  $row = array('<strong>' . t('Total') .'</strong>');
+  if (function_exists('imagecreatetruecolor')) {
+    $row[] = "<img src='". url('support_pm/image/DDDDDD'). "' alt='swatch' height='15' width='15' />";
+  }
+  $plan = isset($totals['plan']) ? array_sum($totals['plan']) : 0;
+  $actual = isset($totals['actual']) ? array_sum($totals['actual']) : 0;
+  $row[] = '<strong>' . number_format($plan, 2) . '</strong>';
+  $row[] = '<strong>' . number_format($actual, 2) . '</strong>';
+  $diff = $actual - $plan;
+  $row[] = '<strong>' . theme('support_pm_plan_diff', array('diff' => $diff, 'plan' => $plan));
+  $rows[] = $row;
+  $output .= theme('table', array('header' => $header, 'rows' => $rows, 'attributes' => array('id' => 'support_pm_clients')));
+
+  $output .= theme('support_pm_pager', array('text' => t('next ›'), 'op' => '>'));
+
+  return $output;
+}
+
+function support_pm_display_swatch($color) {
+  $color = preg_replace('/[^0-9a-fA-F]/', '', $color);
+  if (strlen($color)) {
+    if (strlen($color) == 3) {
+      $color = $color . $color;
+    }
+    if (strlen($color) > 6) {
+      $color = substr($color, 0, 6);
+    }
+    else if (strlen($color) < 6) {
+      $color = 'FFFFFF';
+    }
+  }
+  $image = imagecreatetruecolor(15, 15);
+  $swatch = imagecolorallocate($image, hexdec(substr($color, 0, 2)), hexdec(substr($color, 2, 2)), hexdec(substr($color, 4, 2)));
+  imagefill($image, 0, 0, $swatch);
+  header('Content-type: image/png');
+  imagepng($image);
+  imagedestroy($image);
+}
+
+/**     
+ * Page callback.
+ */
+function support_pm_user_week($form, &$form_state, $user) {
+  $week = isset($_GET['week']) ? (int)$_GET['week'] : time();
+  $dates = _support_pm_dates($week);
+
+  drupal_add_js(array('support_pm' => array('unload_warning' => variable_get('support_pm_unload_warning', TRUE), 'elapsed' => 0)), 'setting');
+  drupal_add_js(drupal_get_path('module', 'support_pm'). '/support_pm.js');
+
+  $clients = _support_available_clients($user);
+  $clients['totals'] = '<strong>' . t('Totals') . '</strong>';
+  foreach ($clients as $clid => $name) {
+    $form['client'][$clid] = array('#markup' => $name);
+    foreach ($dates as $date => $day) {
+      $hours = db_query('SELECT hours FROM {support_plan} WHERE clid = :client AND uid = :uid AND day = :day', array(':client' => $clid, ':uid' => $user->uid, ':day' => $date))->fetchField();
+      $form['textfields'][$clid]["$clid:$date"] = array(
+        '#type' => 'textfield',
+        '#size' => '2',
+        '#default_value' => $hours ? $hours : 0,
+        '#disabled' => ($clid == 'totals' ? TRUE : FALSE),
+      );
+    }
+    $form['textfields'][$clid]["$clid:totals"] = array(
+      '#type' => 'textfield',
+      '#size' => '2',
+      '#disabled' => TRUE,
+      '#default_value' => 0,
+    );
+    if ($clid != 'totals') {
+      $comment = db_query('SELECT comment FROM {support_plan} WHERE clid = :client AND uid = :uid AND day = :day', array(':client' => $clid, ':uid' => $user->uid, ':day' => _support_pm_first_day($week)))->fetchField();
+      $form['textfields'][$clid]["$clid:comment"] = array(
+        '#type' => 'textfield',
+        '#size' => '20',
+        '#disabled' => FALSE,
+        '#default_value' => $comment,
+      );
+    }
+  }
+  $form['uid'] = array(
+    '#type' => 'hidden',
+    '#value' => $user->uid,
+  );
+  $form['submit'] = array('#type' => 'submit', '#value' => t('Save plan'));
+
+  return $form;
+}
+
+/**
+ * Save user's week plan.
+ */
+function support_pm_user_week_submit($form, &$form_state) {
+  $week = isset($_GET['week']) ? _support_pm_first_day((int)$_GET['week']) : _support_pm_first_day(time());
+  $dates = _support_pm_dates($week);
+  $dates['totals'] = t('Totals');
+  $user = user_load($form_state['values']['uid']);
+  $clients = _support_available_clients($user);
+  foreach ($form_state['values'] as $key => $value) {
+    $key = explode(':', $key);
+    // Skip values that aren't part of the matrix.
+    if (count($key) != 2) {
+      continue;
+    }
+    $clid = $key[0];
+    $day = $key[1];
+    if (!empty ($day)) {
+      if (isset($clients[$clid]) && $day != 'totals') {
+        if ($day == 'comment') {
+          db_merge('support_plan')
+            ->key(array(
+              'clid' => $clid,
+              'uid' => $user->uid,
+              'day' => $week,
+            ))
+            ->fields(array(
+              'comment' => $value,
+            ))
+            ->execute();
+        }
+        else {
+          db_merge('support_plan')
+            ->key(array(
+              'clid' => $clid,
+              'uid' => $user->uid,
+              'day' => $day,
+            ))
+            ->fields(array(
+              'hours' => $value,
+            ))
+            ->execute();
+        }
+      }
+    }
+  }
+  drupal_goto("user/$user->uid/support_pm", array('query' => array('week' => $week)));
+}
+
+/**
+ * TODO: Auto-calculate totals whenever a field is updated.
+ */
+function theme_support_pm_user_week($variables) {
+  $form = $variables['form'];
+  $week = isset($_GET['week']) ? _support_pm_first_day((int)$_GET['week']) : _support_pm_first_day(time());
+  drupal_set_title(t('@start - @end', array('@start' => format_date($week, 'medium'), '@end' => format_date($week + 86400 * 6, 'medium'))), PASS_THROUGH);
+  $dates = _support_pm_dates($week);
+  $dates['totals'] = t('Totals');
+  $dates['comment'] = t('Comments');
+  $rows = array();
+  foreach (element_children($form['client']) as $key) {
+    // Don't take form control structures
+    if (isset($form['client'][$key]) && is_array($form['client'][$key])) {
+      $row = array();
+      $row[] = array(
+        'data' => drupal_render($form['client'][$key]),
+        'class' => 'support-client',
+        'id' => drupal_clean_css_identifier('client-' . $form['client'][$key]['#markup']),
+      );
+      if (is_array($form['textfields'][$key])) {
+        foreach ($dates as $date => $name) {
+          $row[] = array(
+            'data' => drupal_render($form['textfields'][$key]["$key:$date"]),
+            'class' => 'textfield',
+            'title' => $name,
+          );
+        }
+      }
+    }
+    $rows[] = $row;
+  }
+  $header[] = (t('Client'));
+  foreach ($dates as $date => $name) {
+    if (is_numeric($date) && $name == format_date($date, 'custom', 'l')) {
+      $header[] = t('!day<br />!date', array('!day' => format_date($date, 'custom', 'l'), '!date' => format_date($date, 'custom', 'M d')));
+    }
+    else {
+      $header[] = $name;
+    }
+  }
+  $output = theme('support_pm_pager', array('text' => t('‹ previous'), 'op' => '<'));
+  $output .= theme('table', array('header' => $header, 'rows' => $rows, 'attributes' => array('id' => 'permissions')));
+  $output .= drupal_render_children($form);
+  $output .= theme('support_pm_pager', array('text' => t('next ›'), 'op' => '>'));
+  return $output;
+}
+
+/**
+ * Bar graph details.
+ */
+function theme_support_pm_user_client_hours_details($variables) {
+  $day = $variables['day'];
+  $scale = $variables['scale'];
+  static $comment;
+
+  $clients = array();
+  $chart = array();
+  $hours = array();
+  $colors = array();
+
+  foreach ($day as $clid => $data) {
+    $hours[$clid] = $data->hours;
+    $colors[$clid] = support_pm_chartapi_color($clid);
+  }
+
+  if (empty($hours)) {
+    $hours[] = 0;
+    $colors[] = support_pm_chartapi_color(0);
+  }
+
+  // TODO: Allow attribute overrides
+  $attributes = array('class' => 'chart');
+  $output = support_pm_chartapi_render(array(
+    'cht' => 'bvs',
+    'chd' => 't:' . implode('|', $hours),
+    'chco' => implode(',', $colors),
+    'chs' => '45x70',
+    'chl' => format_plural(array_sum($hours), '1 hr', '@count hrs'),
+    'chma' => '7,0,7',
+    'chds' => "0,$scale",
+  ), $attributes);
+
+  return $output;
+}
+
+/**
+ * Pie chart summary.
+ */
+function theme_support_pm_user_hours_summary($variables) {
+  $output = '';
+  $totals = $variables['totals'];
+  $load_callback = $variables['load_callback'];
+  $max = $variables['max'];
+  $message = $variables['message'];
+  if (!is_array($totals)) {
+    return;
+  }
+
+  arsort($totals);
+
+  $data = array();
+  foreach ($totals as $id => $total) {
+    if ($id) {
+      if (!isset($data['totals'][$id])) {
+        $data['totals'][$id] = 0;
+      }
+      $data['totals'][$id] += $total;
+      $data['labels'][$id] = format_plural($total, '1 hr', '@count hrs');
+      $data['colors'][$id] = support_pm_chartapi_color($id, 'user');
+      $details = $load_callback($id);
+      $data['legend'][$id] = check_plain($details->name);
+    }
+  }
+
+  if (isset($data['totals']) && is_array($data['totals'])) {
+    foreach ($data['totals'] as $id => $total) {
+      if (!$total) {
+        unset($data['totals'][$id]);
+        unset($data['labels'][$id]);
+        unset($data['colors'][$id]);
+        unset($data['legend'][$id]);
+      }
+    }
+  }
+
+  if (!empty($data)) {
+    $total = array_sum($data['totals']);
+    if ($max && $total < $max) {
+      if (!isset($data['totals']['filler'])) {
+        $data['totals']['filler'] = 0;
+      }
+      $data['totals']['filler'] += $max - $total;
+      $data['labels']['filler'] = format_plural($max - $total, '1 hr', '@count hrs');
+      $data['colors']['filler'] = 'DDDDDD';
+      $data['legend']['filler'] = $message;
+    }
+    // TODO: Allow attribute overrides
+    $attributes = array('class' => 'chart');
+    $output = support_pm_chartapi_render(array(
+      'cht' => 'p',
+      'chs' => '450x245',
+      'chtt' => format_plural($total, '1 hr', '@count hrs'),
+      'chd' => 't:' . implode(',', $data['totals']),
+      'chdl' => implode('|', $data['legend']),
+      'chco' => implode(',', $data['colors']),
+      'chl' => implode('|', $data['labels']),
+      'chma' => '25,0,15,15',
+    ), $attributes);
+  }
+  return $output;
+}
+
+/**
+ * Helper function to show previous and next weeks.
+ */
+function theme_support_pm_pager($variables) {
+  $text = $variables['text'];
+  $op = $variables['op'];
+  $parameters = $variables['parameters'];
+  $attributes = $variables['attributes'];
+  $first_day = isset($_GET['week']) ? _support_pm_first_day((int)$_GET['week']) : _support_pm_first_day(time());
+  $week = $first_day;
+  $prepend = $append = '';
+  switch ($op) {
+    case '<':
+      $week -= 86400 * 7;
+      $prepend = '‹ ';
+      break;
+    case '>':
+      $week += 86400 * 7;
+      $append = ' ›';
+      break;
+    default:
+      $append = '';
+      $prepend = '';
+      break;
+  }
+  $dates = t('@start - @end', array('@start' => format_date($week, 'medium'), '@end' => format_date($week + 86400 * 6, 'medium')));
+  $text = t('@prepend@dates@append', array('@prepend' => $prepend, '@dates' => $dates, '@append' => $append));
+
+  $query = array();
+  if (!isset($parameters['week'])) {
+    $parameters['week'] = $week;
+  }
+  if (!isset($attributes['title'])) {
+    $attributes['title'] = t('View plan for week of @week', array('@week' => $dates));
+  }
+
+  return l($text, $_GET['q'], array('attributes' => $attributes, 'query' => $parameters));
+}
+
+function theme_support_pm_plan_diff($variables) {
+  $diff = $variables['diff'];
+  $plan = $variables['plan'];
+  $diff = number_format($diff, 2);
+  $percent = $plan ? number_format($diff / $plan * 100, 2) : 0;
+  if ($diff < 0) {
+    return "<font color='red'>$diff ($percent%)</font>";
+  }
+  else if ($diff > 0) {
+    if ($plan) {
+      return "<font color='green'>$diff (+$percent%)</font>";
+    }
+    else {
+      return "<font color='brown'>$diff</font>";
+    }
+  }
+  return $diff;
+}
+
+/**
+ * TODO: Proper timezone support
+ */
+function _support_pm_first_day($time = 0) {
+  // Use Drupal core's configurable first day of the week.
+  $date_first_day = variable_get('date_first_day', 0);
+  if (!$time) {
+    $time = time();
+  }
+  // Determine what day of the week $time is
+  $day = date('w', $time);
+  // Now calculate a timestamp for the first day of this week,
+  // respecting the configured first day of the week.
+  if ($day >= $date_first_day) {
+    $days = $day - $date_first_day;
+  }
+  else {
+    $days = $day + 7 - $date_first_day;
+  }
+  return (strtotime(date('M d, Y 12:00', $time - 86400 * $days)));
+}
+
+/**
+ * Return array of days, $timestamp => $day where $timestamp is the first
+ * second of the named $day.
+ */
+function _support_pm_dates($start = 0) {
+  // TODO: Make configurable (ie, disable weekends)
+  $day = array(t('Sunday'), t('Monday'), t('Tuesday'), t('Wednesday'), t('Thursday'), t('Friday'), t('Saturday'));
+  $date = _support_pm_first_day($start);
+  $day_of_week = variable_get('date_first_day', 0);
+  // Build an array of $timestamp => $day pairs
+  for ($i = 0; $i < 7; $i++) {
+    $dates[$date] = $day[$day_of_week];
+    $date += 86400;
+    if (++$day_of_week > 6) {
+      $day_of_week = 0;
+    }
+  }
+  return $dates;
+}
+
+function support_pm_day_load($date = NULL, $user = NULL, $client = NULL) {
+  if (is_null($date)) {
+    // default to this week
+    $date = _support_pm_first_day();
+  }
+  $query = db_select('support_plan')
+    ->fields('support_plan', array('clid', 'uid', 'day', 'hours', 'comment'))
+    ->condition('day', $date)
+    ->condition('hours', 0, '>');
+
+  if (is_object($user) && isset($user->uid)) {
+    $query->condition('uid', $user->uid);
+  }
+
+  if (is_object($client) && isset($client->clid)) {
+    $query->condition('clid', $client->clid);
+  }
+
+  $day = array();
+  $result = $query->execute();
+  foreach ($result as $row) {
+    $day[$row->uid][$row->clid] = $row;
+  }
+  return $day;
+}
+
+/**
+ * Google ChartAPI calls.
+ *  TODO: Move into a helper module? (chartapi module seems abandoned)
+ **/
+
+/**
+ * In order to optimize displaying multiple charts on one page,
+ * we generate unique urls for the charts.
+ * TODO: Why does this break?
+ */
+function support_pm_chartapi_uri() {
+  return 'http://chart.apis.google.com/chart';
+  static $i = 0;
+  $uri = "http://$i.chart.apis.google.com/chart";
+  if (++$i > 9) {
+    $i = 0;
+  }
+  return $uri;
+}
+
+function support_pm_chartapi_color($id, $type = 'client') {
+  static $color = 0;
+  static $values = NULL;
+  $update = FALSE;
+
+  if (!isset($values)) {
+    $values = variable_get('support_pm_color_values', array());
+    $color = variable_get('support_pm_color', 0);
+  }
+  $colors = array('66FF99', '6699CC', 'FFCCFF', 'FFFF99', 'FFFF00', '6633CC', '666600', 'FFCC00', '666666', '66FF00', '66CC66', '66FFFF', '669933', 'FF6600', '6666FF', 'FF3300', '66CCFF', '663333', 'FF0000');
+
+  if (!isset($values[$type][$id])) {
+    $values[$type][$id] = $colors[$color++];
+    $update = TRUE;
+  }
+  if ($color > count($colors)) {
+    $color = 0;
+  }
+  if ($update) {
+    variable_set('support_pm_color_values', $values);
+    variable_set('support_pm_color', $color);
+  }
+  return $values[$type][$id];
+}
+
+function support_pm_chartapi_render($chart, $attributes = array()) {
+  return '<img src="' . support_pm_chartapi_uri() . '?' . drupal_http_build_query(drupal_get_query_parameters($chart)) . '"' . drupal_attributes($attributes) . " />\n";
+}
+
+/**
+ * Convert from timer time format to decimal.
+ */
+function support_pm_timer_to_hours($time) {
+  $time = explode(':', $time);
+  if (!isset($time[1])) {
+    $time[1] = 0;
+  }
+  $hours = (int)$time[0];
+  $minutes = round((int)$time[1] / 60, 2);
+  return $hours + $minutes;
+}
+
+/**
+ * Load project from database.
+ */
+function support_pm_project_load($projid) {
+  static $projects = array();
+
+  if (!isset($projects[$projid])) {
+    $projects[$projid] = db_query('SELECT * FROM {support_project} WHERE projid = :project', array(':project' => $projid))->fetchObject();
+    if (empty($projects[$projid])) {
+      return FALSE;
+    }
+    $projects[$projid]->clids = array();
+    $result = db_query('SELECT clid FROM {support_project_client} WHERE projid = :project', array(':project' => $projid));
+    foreach ($result as $client) {
+      $projects[$projid]->clids[] = $client->clid;
+    }
+    drupal_alter('support_pm_project_load', $projects[$projid]);
+  }
+  return $projects[$projid];
+}
+
+function support_pm_project_load_nid($nid) {
+  static $projects = array();
+
+  if (!isset($projects[$nid])) {
+    $projects[$nid] = db_query('SELECT * FROM {support_project_ticket} spt LEFT JOIN {support_project} sp ON spt.projid = sp.projid WHERE spt.nid = :nid', array(':nid' => $nid))->fetchObject();
+    drupal_alter('support_pm_project_load_nid', $projects[$nid]);
+  }
+  return $projects[$nid];
+}
+
+/**
+ * Load projects assigned to a given client.
+ */
+function support_pm_load_projects($clid) {
+  $projects = array();
+  $result = db_query('SELECT sp.projid, sp.project FROM {support_project} sp INNER JOIN {support_project_client} spc ON sp.projid = spc.projid WHERE (spc.clid = :client OR spc.clid = 0) AND disabled = 0', array(':client' => $clid));
+  foreach ($result as $project) {
+    $projects[$project->projid] = $project->project;
+  }
+  return $projects;
+}
+
+/**
+ * Determine default for a list of projects.
+ */
+function support_pm_default_project($projects) {
+  $projids = array();
+  foreach ($projects as $projid => $project) {
+    $projids[] = $projid;
+  }
+  if (empty($projids)) {
+    return 0;
+  }
+  else {
+    return db_query_range('SELECT projid FROM {support_project} WHERE projid IN (:projects) AND disabled = 0 ORDER BY weight ASC', 0, 1, array(':projects' => $projids))->fetchField();
+  }
+}
